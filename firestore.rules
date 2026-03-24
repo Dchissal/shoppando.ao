@@ -1,0 +1,160 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - name: string (required)
+    //   - phone: string (required)
+    //   - email: string (optional)
+    //   - address: string (required)
+    //   - photoURL: string (optional)
+    //   - role: string (required, enum: ['admin', 'user'])
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: products
+    // Document ID: {productId}
+    // Fields:
+    //   - name: string (required)
+    //   - description: string (optional)
+    //   - price: number (required)
+    //   - oldPrice: number (optional)
+    //   - category: string (required)
+    //   - imageURL: string (required)
+    //   - stock: number (optional)
+    //   - createdAt: timestamp (required)
+    //   - createdBy: string (required, uid)
+    //
+    // Collection: otps
+    // Document ID: {email}
+    // Fields:
+    //   - otp: string (required)
+    //   - expiresAt: timestamp (required)
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.email == "reciadodaniel@gmail.com" && request.auth.token.email_verified == true ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.uid is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.phone is string && data.phone.size() > 0 && data.phone.size() < 20 &&
+             (!('email' in data) || data.email is string) &&
+             data.address is string && data.address.size() > 0 && data.address.size() < 500 &&
+             (!('photoURL' in data) || data.photoURL is string) &&
+             data.role in ['admin', 'user'] &&
+             (!('status' in data) || data.status in ['active', 'inactive', 'suspended']) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidProduct(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.price is number && data.price >= 0 &&
+             data.category is string && data.category.size() > 0 &&
+             data.imageURL is string && data.imageURL.size() > 0 &&
+             (!('oldPrice' in data) || data.oldPrice is number) &&
+             (!('description' in data) || data.description is string) &&
+             (!('stock' in data) || data.stock is int && data.stock >= 0) &&
+             (!('status' in data) || data.status in ['active', 'inactive']) &&
+             data.createdBy is string &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Users can only read their own profile, unless they are admin
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Users can create their own profile as 'user' role
+      // Only admins can create other admins
+      allow create: if (isOwner(userId) || isAdmin()) && 
+                      isValidUser(request.resource.data) && 
+                      (request.resource.data.role == 'user' || isAdmin());
+      
+      // Users can update their own profile, but cannot change their role unless they are admin
+      // Admins can update any profile
+      allow update: if (isOwner(userId) || isAdmin()) && 
+                      isValidUser(request.resource.data) && 
+                      (isOwner(userId) ? (request.resource.data.role == resource.data.role || isAdmin()) : isAdmin());
+    }
+
+    match /products/{productId} {
+      // Anyone can read products
+      allow read: if true;
+      
+      // Only admins can create, update, or delete products
+      allow create: if isAdmin() && isValidProduct(request.resource.data);
+      allow update: if isAdmin() && isValidProduct(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      // Users can read their own orders, admins can read all
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      
+      // Users can create orders, admins can update/delete
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /coupons/{couponId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /otps/{email} {
+      // Client should never read or write OTPs directly.
+      // Server handles this via Firebase Admin SDK.
+      allow read, write: if false;
+    }
+  }
+}

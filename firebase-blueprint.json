@@ -1,0 +1,125 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access control.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique ID of the user." },
+        "name": { "type": "string", "description": "Full name of the user." },
+        "phone": { "type": "string", "description": "Phone number of the user." },
+        "email": { "type": "string", "description": "Email address (optional)." },
+        "address": { "type": "string", "description": "Physical address." },
+        "photoURL": { "type": "string", "description": "Profile picture URL." },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "User role for permissions." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp." }
+      },
+      "required": ["uid", "name", "phone", "address", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Article available in the shop.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique ID of the product." },
+        "name": { "type": "string", "description": "Name of the article." },
+        "description": { "type": "string", "description": "Detailed description." },
+        "price": { "type": "number", "description": "Current price." },
+        "oldPrice": { "type": "number", "description": "Original price for discount display." },
+        "category": { "type": "string", "description": "Product category." },
+        "imageURL": { "type": "string", "description": "Product image URL." },
+        "stock": { "type": "integer", "description": "Available quantity." },
+        "status": { "type": "string", "enum": ["active", "inactive"], "description": "Product status." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the product was added." },
+        "createdBy": { "type": "string", "description": "UID of the admin who added it." }
+      },
+      "required": ["name", "price", "category", "imageURL", "createdBy"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase transaction.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique ID of the order." },
+        "userId": { "type": "string", "description": "UID of the customer." },
+        "userName": { "type": "string", "description": "Name of the customer." },
+        "items": { "type": "array", "description": "List of products in the order." },
+        "total": { "type": "number", "description": "Total order amount." },
+        "status": { "type": "string", "enum": ["pending", "paid", "processing", "shipped", "delivered", "cancelled"], "description": "Current order status." },
+        "paymentMethod": { "type": "string", "description": "Method used for payment." },
+        "shippingAddress": { "type": "string", "description": "Delivery address." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the order was placed." }
+      },
+      "required": ["userId", "items", "total", "status", "createdAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product classification.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique ID of the category." },
+        "name": { "type": "string", "description": "Name of the category." },
+        "description": { "type": "string", "description": "Category description." },
+        "imageURL": { "type": "string", "description": "Category image URL." },
+        "order": { "type": "integer", "description": "Display order." }
+      },
+      "required": ["name"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Discount code for promotions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique ID of the coupon." },
+        "code": { "type": "string", "description": "Promotional code." },
+        "type": { "type": "string", "enum": ["percentage", "fixed"], "description": "Discount type." },
+        "value": { "type": "number", "description": "Discount value." },
+        "expiryDate": { "type": "string", "format": "date-time", "description": "When the coupon expires." },
+        "usageLimit": { "type": "integer", "description": "Maximum number of uses." },
+        "usageCount": { "type": "integer", "description": "Current number of uses." }
+      },
+      "required": ["code", "type", "value"]
+    },
+    "OTP": {
+      "title": "OTP",
+      "description": "One-time password for email verification.",
+      "type": "object",
+      "properties": {
+        "otp": { "type": "string", "description": "The 6-digit code." },
+        "expiresAt": { "type": "string", "format": "date-time", "description": "When the code expires." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the code was generated." }
+      },
+      "required": ["otp", "expiresAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles."
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Shop articles."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders."
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Product categories."
+    },
+    "/coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Discount coupons."
+    },
+    "/otps/{email}": {
+      "schema": "OTP",
+      "description": "One-time passwords for email verification."
+    },
+    "/settings/{settingId}": {
+      "schema": "object",
+      "description": "Global app settings."
+    }
+  }
+}
