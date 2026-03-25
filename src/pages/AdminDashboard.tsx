@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  ShoppingBag, 
-  Package, 
-  Users, 
-  ShoppingCart, 
-  BarChart3, 
-  Settings, 
-  Megaphone, 
+import {
+  ShoppingBag,
+  Package,
+  Users,
+  ShoppingCart,
+  BarChart3,
+  Settings,
+  Megaphone,
   LayoutDashboard,
   LogOut,
-  Loader2
+  Loader2,
+  Heart
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
@@ -27,6 +28,7 @@ import { CustomersView } from '../components/admin/CustomersView';
 import { MarketingView } from '../components/admin/MarketingView';
 import { ReportsView } from '../components/admin/ReportsView';
 import { SettingsView } from '../components/admin/SettingsView';
+import { WishesView } from '../components/admin/WishesView';
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -120,17 +122,23 @@ export default function AdminDashboard() {
             active={activeTab === 'orders'} 
             onClick={() => setActiveTab('orders')} 
           />
-          <SidebarLink 
-            icon={<Users />} 
-            label="Clientes" 
-            active={activeTab === 'customers'} 
-            onClick={() => setActiveTab('customers')} 
+          <SidebarLink
+            icon={<Users />}
+            label="Clientes"
+            active={activeTab === 'customers'}
+            onClick={() => setActiveTab('customers')}
           />
-          <SidebarLink 
-            icon={<Megaphone />} 
-            label="Marketing" 
-            active={activeTab === 'marketing'} 
-            onClick={() => setActiveTab('marketing')} 
+          <SidebarLink
+            icon={<Heart />}
+            label="Desejos"
+            active={activeTab === 'wishes'}
+            onClick={() => setActiveTab('wishes')}
+          />
+          <SidebarLink
+            icon={<Megaphone />}
+            label="Marketing"
+            active={activeTab === 'marketing'}
+            onClick={() => setActiveTab('marketing')}
           />
           <SidebarLink 
             icon={<BarChart3 />} 
@@ -173,6 +181,7 @@ export default function AdminDashboard() {
           {activeTab === 'products' && <ProductsView products={products} />}
           {activeTab === 'orders' && <OrdersView orders={orders} />}
           {activeTab === 'customers' && <CustomersView customers={customers} orders={orders} />}
+          {activeTab === 'wishes' && <WishesView />}
           {activeTab === 'marketing' && <MarketingView />}
           {activeTab === 'reports' && <ReportsView />}
           {activeTab === 'settings' && <SettingsView />}

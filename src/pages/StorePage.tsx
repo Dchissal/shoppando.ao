@@ -26,6 +26,7 @@ import { useCart } from '../context/CartContext';
 import { Product } from '../types';
 import { STORE_NAME } from '../constants';
 import NotificationDropdown from '../components/NotificationDropdown';
+import FilterPanel, { FilterState } from '../components/FilterPanel';
 
 interface UserProfile {
   uid: string;
@@ -51,6 +52,20 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
   const [searchHistory, setSearchHistory] = useState<string[]>(() => {
     const saved = localStorage.getItem(`${STORE_NAME.toLowerCase().replace('.', '_')}_search_history`);
     return saved ? JSON.parse(saved) : [];
+  });
+
+  // Advanced Filters State
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
+  const [advancedFilters, setAdvancedFilters] = useState<FilterState>({
+    categories: ['Todos'],
+    priceRange: [0, 2000000],
+    sortBy: 'relevance',
+    stockStatus: [],
+    status: [],
+    featured: null,
+    dateFilter: 'all',
+    minStock: 0,
+    maxStock: 1000
   });
 
   const { cart, addToCart, removeFromCart, updateQuantity, cartTotal, cartCount } = useCart();
@@ -173,14 +188,73 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
   };
 
   const filteredProducts = products.filter(product => {
+    // Basic search and category filters
     const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === 'Todos' || product.category === selectedCategory;
-    const matchesPrice = product.price >= priceRange[0] && product.price <= priceRange[1];
-    return matchesSearch && matchesCategory && matchesPrice;
+    const matchesCategory = advancedFilters.categories.includes('Todos') || advancedFilters.categories.includes(product.category);
+    const matchesPrice = product.price >= advancedFilters.priceRange[0] && product.price <= advancedFilters.priceRange[1];
+
+    // Advanced filters
+    // Stock Status Filter
+    let matchesStock = true;
+    if (advancedFilters.stockStatus.length > 0) {
+      const stockConditions = advancedFilters.stockStatus.map(status => {
+        switch (status) {
+          case 'available':
+            return product.stock > 10;
+          case 'low_stock':
+            return product.stock > 0 && product.stock <= 10;
+          case 'out_of_stock':
+            return product.stock === 0;
+          default:
+            return false;
+        }
+      });
+      matchesStock = stockConditions.some(condition => condition);
+    }
+
+    // Product Status Filter
+    let matchesStatus = true;
+    if (advancedFilters.status.length > 0) {
+      matchesStatus = advancedFilters.status.includes(product.status);
+    }
+
+    // Featured Filter
+    let matchesFeatured = true;
+    if (advancedFilters.featured !== null) {
+      matchesFeatured = Boolean(product.featured) === advancedFilters.featured;
+    }
+
+    // Date Filter
+    let matchesDate = true;
+    if (advancedFilters.dateFilter !== 'all' && product.createdAt) {
+      const now = new Date();
+      const productDate = new Date(product.createdAt.seconds * 1000);
+
+      switch (advancedFilters.dateFilter) {
+        case 'today':
+          matchesDate = productDate.toDateString() === now.toDateString();
+          break;
+        case 'week':
+          const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          matchesDate = productDate >= weekAgo;
+          break;
+        case 'month':
+          const monthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+          matchesDate = productDate >= monthAgo;
+          break;
+      }
+    }
+
+    // Stock Quantity Filter
+    const matchesStockQuantity = product.stock >= advancedFilters.minStock && product.stock <= advancedFilters.maxStock;
+
+    return matchesSearch && matchesCategory && matchesPrice && matchesStock && matchesStatus && matchesFeatured && matchesDate && matchesStockQuantity;
   }).sort((a, b) => {
-    if (selectedSort === 'price-low') return a.price - b.price;
-    if (selectedSort === 'price-high') return b.price - a.price;
-    if (selectedSort === 'newest') return b.createdAt?.seconds - a.createdAt?.seconds;
+    if (advancedFilters.sortBy === 'price-low') return a.price - b.price;
+    if (advancedFilters.sortBy === 'price-high') return b.price - a.price;
+    if (advancedFilters.sortBy === 'newest') return b.createdAt?.seconds - a.createdAt?.seconds;
+    if (advancedFilters.sortBy === 'stock-high') return b.stock - a.stock;
+    if (advancedFilters.sortBy === 'stock-low') return a.stock - b.stock;
     return 0;
   });
 
@@ -188,6 +262,25 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
     if (!oldPrice || !newPrice) return 0;
     return Math.round(((oldPrice - newPrice) / oldPrice) * 100);
   };
+
+  // Sync basic filters with advanced filters
+  const handleFiltersChange = (newFilters: FilterState) => {
+    setAdvancedFilters(newFilters);
+    // Update basic state for backward compatibility
+    setSelectedCategory(newFilters.categories.includes('Todos') ? 'Todos' : newFilters.categories[0]);
+    setPriceRange(newFilters.priceRange);
+    setSelectedSort(newFilters.sortBy);
+  };
+
+  // Update advanced filters when basic filters change
+  useEffect(() => {
+    setAdvancedFilters(prev => ({
+      ...prev,
+      categories: selectedCategory === 'Todos' ? ['Todos'] : [selectedCategory],
+      priceRange,
+      sortBy: selectedSort
+    }));
+  }, [selectedCategory, priceRange, selectedSort]);
 
   const promoProducts = filteredProducts.filter(p => p.oldPrice);
   const regularProducts = filteredProducts.filter(p => !p.oldPrice);
@@ -371,10 +464,16 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
           {categories.map((cat) => (
             <button
               key={cat}
-              onClick={() => setSelectedCategory(cat)}
+              onClick={() => {
+                setSelectedCategory(cat);
+                setAdvancedFilters(prev => ({
+                  ...prev,
+                  categories: cat === 'Todos' ? ['Todos'] : [cat]
+                }));
+              }}
               className={`px-6 py-2.5 rounded-full text-sm font-bold whitespace-nowrap transition-all ${
-                selectedCategory === cat 
-                  ? 'bg-orange-600 text-white shadow-lg shadow-orange-200' 
+                advancedFilters.categories.includes(cat) || (cat === 'Todos' && advancedFilters.categories.includes('Todos'))
+                  ? 'bg-orange-600 text-white shadow-lg shadow-orange-200'
                   : 'bg-white text-neutral-500 hover:bg-neutral-100 border border-neutral-100'
               }`}
             >
@@ -387,7 +486,7 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
           <div>
             <h1 className="text-3xl font-black tracking-tight text-neutral-900">
-              {selectedCategory === 'Todos' ? 'Explorar Tudo' : selectedCategory}
+              {advancedFilters.categories.includes('Todos') ? 'Explorar Tudo' : advancedFilters.categories[0]}
             </h1>
             <p className="text-neutral-500 mt-1 font-medium">
               {filteredProducts.length} artigos encontrados para si
@@ -395,7 +494,7 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
           </div>
           
           <div className="flex items-center gap-3">
-            <select 
+            <select
               value={selectedSort}
               onChange={(e) => setSelectedSort(e.target.value)}
               className="bg-white border border-neutral-200 rounded-xl px-4 py-2 text-sm font-bold text-neutral-600 outline-none focus:ring-2 focus:ring-orange-600 transition-all"
@@ -404,12 +503,18 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
               <option value="price-low">Menor Preço</option>
               <option value="price-high">Maior Preço</option>
               <option value="newest">Mais Recentes</option>
+              <option value="stock-high">Maior Stock</option>
+              <option value="stock-low">Menor Stock</option>
             </select>
-            
-            <button className="flex items-center gap-2 px-4 py-2 bg-white border border-neutral-200 rounded-xl text-sm font-bold text-neutral-600 hover:bg-neutral-50 transition-colors">
-              <Filter className="w-4 h-4" />
-              Filtros
-            </button>
+
+            <FilterPanel
+              filters={advancedFilters}
+              onFiltersChange={handleFiltersChange}
+              isOpen={isFilterPanelOpen}
+              onToggle={() => setIsFilterPanelOpen(!isFilterPanelOpen)}
+              categories={categories}
+              totalProducts={filteredProducts.length}
+            />
           </div>
         </div>
 
@@ -420,11 +525,19 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
               <h3 className="text-sm font-black text-neutral-900 uppercase tracking-widest mb-4">Categorias</h3>
               <div className="space-y-2">
                 {categories.map(cat => (
-                  <button 
+                  <button
                     key={cat}
-                    onClick={() => setSelectedCategory(cat)}
+                    onClick={() => {
+                      setSelectedCategory(cat);
+                      setAdvancedFilters(prev => ({
+                        ...prev,
+                        categories: cat === 'Todos' ? ['Todos'] : [cat]
+                      }));
+                    }}
                     className={`w-full text-left px-4 py-2 rounded-xl text-sm font-bold transition-all ${
-                      selectedCategory === cat ? 'bg-orange-600 text-white shadow-lg shadow-orange-100' : 'text-neutral-500 hover:bg-neutral-100'
+                      advancedFilters.categories.includes(cat) || (cat === 'Todos' && advancedFilters.categories.includes('Todos'))
+                        ? 'bg-orange-600 text-white shadow-lg shadow-orange-100'
+                        : 'text-neutral-500 hover:bg-neutral-100'
                     }`}
                   >
                     {cat}
@@ -436,22 +549,29 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
             <div>
               <h3 className="text-sm font-black text-neutral-900 uppercase tracking-widest mb-4">Preço (Kz)</h3>
               <div className="space-y-4">
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="2000000" 
+                <input
+                  type="range"
+                  min="0"
+                  max="2000000"
                   step="10000"
-                  value={priceRange[1]}
-                  onChange={(e) => setPriceRange([priceRange[0], parseInt(e.target.value)])}
+                  value={advancedFilters.priceRange[1]}
+                  onChange={(e) => {
+                    const newRange: [number, number] = [advancedFilters.priceRange[0], parseInt(e.target.value)];
+                    setPriceRange(newRange);
+                    setAdvancedFilters(prev => ({
+                      ...prev,
+                      priceRange: newRange
+                    }));
+                  }}
                   className="w-full h-2 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-orange-600"
                 />
                 <div className="flex items-center justify-between text-xs font-bold text-neutral-500">
                   <span>0 Kz</span>
-                  <span>{priceRange[1].toLocaleString()} Kz</span>
+                  <span>{advancedFilters.priceRange[1].toLocaleString()} Kz</span>
                 </div>
               </div>
             </div>
-            
+
             <div className="p-6 bg-gradient-to-br from-orange-600 via-red-600 to-pink-600 rounded-[2rem] text-white relative overflow-hidden group">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl group-hover:scale-150 transition-transform duration-700" />
               <div className="absolute bottom-0 left-0 w-24 h-24 bg-yellow-300/20 rounded-full -ml-12 -mb-12 blur-xl" />
@@ -544,14 +664,34 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
                             </div>
 
                             <div className="space-y-1 relative z-10">
-                              <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">{product.category}</p>
+                              <div className="flex items-center justify-between">
+                                <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">{product.category}</p>
+                                {product.featured && (
+                                  <div className="bg-gradient-to-r from-yellow-400 to-orange-500 px-2 py-1 rounded-lg">
+                                    <Star className="w-3 h-3 text-white fill-white" />
+                                  </div>
+                                )}
+                              </div>
                               <h3 className="font-bold text-neutral-900 line-clamp-1 group-hover:text-orange-600 transition-colors">
                                 {product.name}
                               </h3>
 
-                              <div className="flex items-center gap-1 text-yellow-400">
-                                <Star className="w-3 h-3 fill-current" />
-                                <span className="text-[10px] font-bold text-neutral-400">{product.rating || 4.9} ({product.reviews || 120})</span>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1 text-yellow-400">
+                                  <Star className="w-3 h-3 fill-current" />
+                                  <span className="text-[10px] font-bold text-neutral-400">{product.rating || 4.9} ({product.reviews || 120})</span>
+                                </div>
+
+                                {/* Stock Status Badge */}
+                                <div className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${
+                                  product.stock === 0
+                                    ? 'bg-red-100 text-red-600'
+                                    : product.stock <= 10
+                                    ? 'bg-yellow-100 text-yellow-600'
+                                    : 'bg-green-100 text-green-600'
+                                }`}>
+                                  {product.stock === 0 ? 'Esgotado' : product.stock <= 10 ? `${product.stock} restantes` : 'Disponível'}
+                                </div>
                               </div>
 
                               <div className="pt-2 flex items-center justify-between">
@@ -569,9 +709,16 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    addToCart(product);
+                                    if (product.stock > 0) {
+                                      addToCart(product);
+                                    }
                                   }}
-                                  className="bg-gradient-to-r from-orange-600 to-red-600 text-white p-2.5 rounded-xl hover:scale-110 transition-all shadow-lg shadow-orange-300 active:scale-95"
+                                  disabled={product.stock === 0}
+                                  className={`p-2.5 rounded-xl transition-all shadow-lg active:scale-95 ${
+                                    product.stock === 0
+                                      ? 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                                      : 'bg-gradient-to-r from-orange-600 to-red-600 text-white hover:scale-110 shadow-orange-300'
+                                  }`}
                                 >
                                   <Plus className="w-5 h-5" />
                                 </button>
@@ -634,14 +781,34 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
                           </div>
 
                           <div className="space-y-1">
-                            <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">{product.category}</p>
+                            <div className="flex items-center justify-between">
+                              <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">{product.category}</p>
+                              {product.featured && (
+                                <div className="bg-gradient-to-r from-yellow-400 to-orange-500 px-2 py-1 rounded-lg">
+                                  <Star className="w-3 h-3 text-white fill-white" />
+                                </div>
+                              )}
+                            </div>
                             <h3 className="font-bold text-neutral-900 line-clamp-1 group-hover:text-orange-600 transition-colors">
                               {product.name}
                             </h3>
 
-                            <div className="flex items-center gap-1 text-yellow-400">
-                              <Star className="w-3 h-3 fill-current" />
-                              <span className="text-[10px] font-bold text-neutral-400">{product.rating || 4.9} ({product.reviews || 120})</span>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1 text-yellow-400">
+                                <Star className="w-3 h-3 fill-current" />
+                                <span className="text-[10px] font-bold text-neutral-400">{product.rating || 4.9} ({product.reviews || 120})</span>
+                              </div>
+
+                              {/* Stock Status Badge */}
+                              <div className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${
+                                product.stock === 0
+                                  ? 'bg-red-100 text-red-600'
+                                  : product.stock <= 10
+                                  ? 'bg-yellow-100 text-yellow-600'
+                                  : 'bg-green-100 text-green-600'
+                              }`}>
+                                {product.stock === 0 ? 'Esgotado' : product.stock <= 10 ? `${product.stock} restantes` : 'Disponível'}
+                              </div>
                             </div>
 
                             <div className="pt-2 flex items-center justify-between">
@@ -653,9 +820,16 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  addToCart(product);
+                                  if (product.stock > 0) {
+                                    addToCart(product);
+                                  }
                                 }}
-                                className="bg-neutral-900 text-white p-2.5 rounded-xl hover:bg-orange-600 transition-all shadow-lg shadow-neutral-200 active:scale-95"
+                                disabled={product.stock === 0}
+                                className={`p-2.5 rounded-xl transition-all shadow-lg active:scale-95 ${
+                                  product.stock === 0
+                                    ? 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                                    : 'bg-neutral-900 text-white hover:bg-orange-600 shadow-neutral-200'
+                                }`}
                               >
                                 <Plus className="w-5 h-5" />
                               </button>
@@ -691,7 +865,20 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
                   onClick={() => {
                     setSearchQuery('');
                     setSelectedCategory('Todos');
+                    const resetFilters: FilterState = {
+                      categories: ['Todos'],
+                      priceRange: [0, 2000000],
+                      sortBy: 'relevance',
+                      stockStatus: [],
+                      status: [],
+                      featured: null,
+                      dateFilter: 'all',
+                      minStock: 0,
+                      maxStock: 1000
+                    };
+                    setAdvancedFilters(resetFilters);
                     setPriceRange([0, 2000000]);
+                    setSelectedSort('relevance');
                   }}
                   className="mt-6 text-orange-600 font-bold hover:underline"
                 >
