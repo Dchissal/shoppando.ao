@@ -13,7 +13,7 @@ service cloud.firestore {
     //   - name: string (required)
     //   - phone: string (required)
     //   - email: string (optional)
-    //   - address: string (required)
+    //   - address: string (optional)
     //   - photoURL: string (optional)
     //   - role: string (required, enum: ['admin', 'user'])
     //   - createdAt: timestamp (required)
@@ -76,11 +76,27 @@ service cloud.firestore {
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.phone is string && data.phone.size() > 0 && data.phone.size() < 20 &&
              (!('email' in data) || data.email is string) &&
-             data.address is string && data.address.size() > 0 && data.address.size() < 500 &&
+             (!('address' in data) || (data.address is string && data.address.size() < 500)) &&
              (!('photoURL' in data) || data.photoURL is string) &&
              data.role in ['admin', 'user'] &&
              (!('status' in data) || data.status in ['active', 'inactive', 'suspended']) &&
              data.createdAt is timestamp;
+    }
+
+    // Validação mais flexível para updates de usuário (campos editáveis)
+    function isValidUserUpdate(data) {
+      return (!('address' in data) || (data.address is string && data.address.size() < 500)) &&
+             (!('photoURL' in data) || data.photoURL is string) &&
+             (!('name' in data) || (data.name is string && data.name.size() > 0 && data.name.size() < 100)) &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() > 0 && data.phone.size() < 20)) &&
+             (!('email' in data) || data.email is string);
+    }
+
+    // Verifica se o usuário não está tentando mudar campos protegidos
+    function userNotChangingProtectedFields() {
+      return request.resource.data.uid == resource.data.uid &&
+             request.resource.data.role == resource.data.role &&
+             request.resource.data.createdAt == resource.data.createdAt;
     }
 
     function isValidProduct(data) {
@@ -103,18 +119,20 @@ service cloud.firestore {
     match /users/{userId} {
       // Users can only read their own profile, unless they are admin
       allow read: if isOwner(userId) || isAdmin();
-      
+
       // Users can create their own profile as 'user' role
       // Only admins can create other admins
-      allow create: if (isOwner(userId) || isAdmin()) && 
-                      isValidUser(request.resource.data) && 
+      allow create: if (isOwner(userId) || isAdmin()) &&
+                      isValidUser(request.resource.data) &&
                       (request.resource.data.role == 'user' || isAdmin());
-      
-      // Users can update their own profile, but cannot change their role unless they are admin
-      // Admins can update any profile
-      allow update: if (isOwner(userId) || isAdmin()) && 
-                      isValidUser(request.resource.data) && 
-                      (isOwner(userId) ? (request.resource.data.role == resource.data.role || isAdmin()) : isAdmin());
+
+      // Users can update their own profile (address, photoURL, name, phone, email)
+      // but cannot change protected fields (uid, role, createdAt)
+      // Admins can update any profile with full validation
+      allow update: if isAdmin() ||
+                      (isOwner(userId) &&
+                       userNotChangingProtectedFields() &&
+                       isValidUserUpdate(request.resource.data));
     }
 
     match /products/{productId} {
@@ -130,10 +148,19 @@ service cloud.firestore {
     match /orders/{orderId} {
       // Users can read their own orders, admins can read all
       allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
-      
-      // Users can create orders, admins can update/delete
+
+      // Users can create orders
       allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if isAdmin();
+
+      // Users can cancel their own pending orders
+      // Admins can update any orders
+      allow update: if isAdmin() ||
+                      (isAuthenticated() &&
+                       request.auth.uid == resource.data.userId &&
+                       resource.data.status == 'pending' &&
+                       request.resource.data.status == 'cancelled');
+
+      allow delete: if isAdmin();
     }
 
     match /categories/{categoryId} {
