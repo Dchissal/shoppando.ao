@@ -600,13 +600,13 @@ const AccountPage: React.FC = () => {
                         >
                           Editar
                         </button>
-                        <button
+                       {/* <button
                           onClick={() => setShowRemoveAddressConfirm(true)}
                           disabled={!userData?.address}
                           className="text-sm font-black text-neutral-400 hover:text-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Remover
-                        </button>
+                        </button>*/}
                       </div>
                     </div>
                   </div>

@@ -13,7 +13,7 @@ service cloud.firestore {
     //   - name: string (required)
     //   - phone: string (required)
     //   - email: string (optional)
-    //   - address: string (optional)
+    //   - address: string (required)
     //   - photoURL: string (optional)
     //   - role: string (required, enum: ['admin', 'user'])
     //   - createdAt: timestamp (required)
@@ -38,12 +38,23 @@ service cloud.firestore {
     //   - expiresAt: timestamp (required)
     //   - createdAt: timestamp (required)
     //
+    // Collection: notifications
+    // Document ID: auto-generated
+    // Fields:
+    //   - userId: string (required, target user)
+    //   - type: string (required, enum: ['order_status', 'new_order', 'new_product', 'promo'])
+    //   - title: string (required)
+    //   - message: string (required)
+    //   - read: boolean (required)
+    //   - data: map (optional, extra data like orderId, productId)
+    //   - createdAt: timestamp (required)
+    //
     // ===============================================================
 
     // ===============================================================
     // Helper Functions
     // ===============================================================
-    
+
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -76,27 +87,11 @@ service cloud.firestore {
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.phone is string && data.phone.size() > 0 && data.phone.size() < 20 &&
              (!('email' in data) || data.email is string) &&
-             (!('address' in data) || (data.address is string && data.address.size() < 500)) &&
+             data.address is string && data.address.size() > 0 && data.address.size() < 500 &&
              (!('photoURL' in data) || data.photoURL is string) &&
              data.role in ['admin', 'user'] &&
              (!('status' in data) || data.status in ['active', 'inactive', 'suspended']) &&
              data.createdAt is timestamp;
-    }
-
-    // Validação mais flexível para updates de usuário (campos editáveis)
-    function isValidUserUpdate(data) {
-      return (!('address' in data) || (data.address is string && data.address.size() < 500)) &&
-             (!('photoURL' in data) || data.photoURL is string) &&
-             (!('name' in data) || (data.name is string && data.name.size() > 0 && data.name.size() < 100)) &&
-             (!('phone' in data) || (data.phone is string && data.phone.size() > 0 && data.phone.size() < 20)) &&
-             (!('email' in data) || data.email is string);
-    }
-
-    // Verifica se o usuário não está tentando mudar campos protegidos
-    function userNotChangingProtectedFields() {
-      return request.resource.data.uid == resource.data.uid &&
-             request.resource.data.role == resource.data.role &&
-             request.resource.data.createdAt == resource.data.createdAt;
     }
 
     function isValidProduct(data) {
@@ -128,17 +123,18 @@ service cloud.firestore {
 
       // Users can update their own profile (address, photoURL, name, phone, email)
       // but cannot change protected fields (uid, role, createdAt)
-      // Admins can update any profile with full validation
+      // Admins can update any profile
       allow update: if isAdmin() ||
                       (isOwner(userId) &&
-                       userNotChangingProtectedFields() &&
-                       isValidUserUpdate(request.resource.data));
+                       request.resource.data.uid == resource.data.uid &&
+                       request.resource.data.role == resource.data.role &&
+                       request.resource.data.createdAt == resource.data.createdAt);
     }
 
     match /products/{productId} {
       // Anyone can read products
       allow read: if true;
-      
+
       // Only admins can create, update, or delete products
       allow create: if isAdmin() && isValidProduct(request.resource.data);
       allow update: if isAdmin() && isValidProduct(request.resource.data);
@@ -182,6 +178,28 @@ service cloud.firestore {
       // Client should never read or write OTPs directly.
       // Server handles this via Firebase Admin SDK.
       allow read, write: if false;
+    }
+
+    match /notifications/{notificationId} {
+      // Users can read their own notifications, admins can read all
+      allow read: if isAuthenticated() &&
+                    (resource.data.userId == request.auth.uid || isAdmin());
+
+      // Admins can create notifications for anyone
+      // System can create notifications (via admin SDK)
+      allow create: if isAdmin() ||
+                      (isAuthenticated() && request.resource.data.userId == request.auth.uid);
+
+      // Users can mark their own notifications as read
+      // Admins can update any notification
+      allow update: if isAdmin() ||
+                      (isAuthenticated() &&
+                       resource.data.userId == request.auth.uid &&
+                       request.resource.data.userId == resource.data.userId);
+
+      // Users can delete their own notifications, admins can delete any
+      allow delete: if isAuthenticated() &&
+                      (resource.data.userId == request.auth.uid || isAdmin());
     }
   }
 }
