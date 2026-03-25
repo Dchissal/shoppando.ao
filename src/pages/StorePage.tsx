@@ -1,30 +1,31 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  ShoppingBag, 
-  Search, 
-  Filter, 
-  ShoppingCart, 
-  User, 
-  LogOut, 
-  ChevronRight, 
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  ShoppingBag,
+  Search,
+  Filter,
+  ShoppingCart,
+  User,
+  LogOut,
+  ChevronRight,
   Star,
   Heart,
   LayoutGrid,
   List,
   Menu,
   X,
-  Bell,
   Settings,
-  Plus
+  Plus,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate, Link } from 'react-router-dom';
 import { auth, db } from '../firebase';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, limit, startAfter, getDocs, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestore-errors';
 import { useCart } from '../context/CartContext';
 import { Product } from '../types';
 import { STORE_NAME } from '../constants';
+import NotificationDropdown from '../components/NotificationDropdown';
 
 interface UserProfile {
   uid: string;
@@ -36,6 +37,9 @@ interface UserProfile {
 export default function StorePage({ userProfile }: { userProfile: UserProfile | null }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -48,9 +52,12 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
     const saved = localStorage.getItem(`${STORE_NAME.toLowerCase().replace('.', '_')}_search_history`);
     return saved ? JSON.parse(saved) : [];
   });
-  
+
   const { cart, addToCart, removeFromCart, updateQuantity, cartTotal, cartCount } = useCart();
   const navigate = useNavigate();
+  const observerTarget = useRef<HTMLDivElement>(null);
+
+  const PRODUCTS_PER_PAGE = 10;
 
   const categories = ['Todos', 'Eletrónicos', 'Moda', 'Casa', 'Beleza', 'Desporto'];
 
@@ -75,18 +82,86 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
     });
   };
 
-  useEffect(() => {
-    const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+  // Carregar produtos iniciais
+  const loadInitialProducts = useCallback(async () => {
+    try {
+      setLoading(true);
+      const q = query(
+        collection(db, 'products'),
+        orderBy('createdAt', 'desc'),
+        limit(PRODUCTS_PER_PAGE)
+      );
+
+      const snapshot = await getDocs(q);
       const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+
       setProducts(prods);
+      setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+      setHasMore(snapshot.docs.length === PRODUCTS_PER_PAGE);
       setLoading(false);
-    }, (error) => {
+    } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'products');
       setLoading(false);
-    });
-    return () => unsubscribe();
+    }
   }, []);
+
+  // Carregar mais produtos
+  const loadMoreProducts = useCallback(async () => {
+    if (!lastDoc || loadingMore || !hasMore) return;
+
+    try {
+      setLoadingMore(true);
+      const q = query(
+        collection(db, 'products'),
+        orderBy('createdAt', 'desc'),
+        startAfter(lastDoc),
+        limit(PRODUCTS_PER_PAGE)
+      );
+
+      const snapshot = await getDocs(q);
+      const newProds = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+
+      if (newProds.length > 0) {
+        setProducts(prev => [...prev, ...newProds]);
+        setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+        setHasMore(snapshot.docs.length === PRODUCTS_PER_PAGE);
+      } else {
+        setHasMore(false);
+      }
+      setLoadingMore(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'products');
+      setLoadingMore(false);
+    }
+  }, [lastDoc, loadingMore, hasMore]);
+
+  // Carregar produtos iniciais ao montar o componente
+  useEffect(() => {
+    loadInitialProducts();
+  }, [loadInitialProducts]);
+
+  // Intersection Observer para infinite scroll
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore) {
+          loadMoreProducts();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    const currentTarget = observerTarget.current;
+    if (currentTarget) {
+      observer.observe(currentTarget);
+    }
+
+    return () => {
+      if (currentTarget) {
+        observer.unobserve(currentTarget);
+      }
+    };
+  }, [hasMore, loadingMore, loadMoreProducts]);
 
   const handleLogout = async () => {
     try {
@@ -108,6 +183,14 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
     if (selectedSort === 'newest') return b.createdAt?.seconds - a.createdAt?.seconds;
     return 0;
   });
+
+  const calculateDiscount = (oldPrice?: number, newPrice?: number) => {
+    if (!oldPrice || !newPrice) return 0;
+    return Math.round(((oldPrice - newPrice) / oldPrice) * 100);
+  };
+
+  const promoProducts = filteredProducts.filter(p => p.oldPrice);
+  const regularProducts = filteredProducts.filter(p => !p.oldPrice);
 
   return (
     <div className="min-h-screen bg-neutral-50 font-sans text-neutral-900">
@@ -179,20 +262,17 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
           </div>
 
             <div className="flex items-center gap-2 md:gap-4">
-              <button 
+              <button
                 onClick={() => navigate('/account')}
                 className="relative p-2 hover:bg-neutral-100 rounded-full transition-colors"
                 title="Minha Conta"
               >
                 <User className="w-6 h-6 text-neutral-600" />
               </button>
-              
-              <button className="relative p-2 hover:bg-neutral-100 rounded-full transition-colors">
-                <Bell className="w-6 h-6 text-neutral-600" />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-orange-600 rounded-full border-2 border-white" />
-            </button>
-            
-            <button 
+
+              <NotificationDropdown />
+
+            <button
               onClick={() => setIsCartOpen(true)}
               className="relative p-2 hover:bg-neutral-100 rounded-full transition-colors"
             >
@@ -245,6 +325,47 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
       </nav>
 
       <main className="max-w-7xl mx-auto px-4 md:px-8 py-8">
+        {/* Promo Banner */}
+        {promoProducts.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-8 relative overflow-hidden rounded-[2rem] bg-gradient-to-r from-orange-600 via-red-600 to-pink-600 p-6 md:p-8 text-white group cursor-pointer"
+            onClick={() => {
+              const promoSection = document.querySelector('#promo-section');
+              promoSection?.scrollIntoView({ behavior: 'smooth' });
+            }}
+          >
+            {/* Animated backgrounds */}
+            <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-300/20 rounded-full -mr-32 -mt-32 blur-3xl animate-pulse" />
+            <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/10 rounded-full -ml-24 -mb-24 blur-2xl group-hover:scale-150 transition-transform duration-700" />
+
+            <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="bg-white/20 backdrop-blur-md p-4 rounded-2xl">
+                  <Star className="w-10 h-10 fill-white animate-bounce" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                      Tempo Limitado
+                    </span>
+                  </div>
+                  <h3 className="text-2xl md:text-3xl font-black mb-1">Ofertas Imperdíveis!</h3>
+                  <p className="text-sm md:text-base text-white/80 font-medium">
+                    {promoProducts.length} produtos em promoção com até 70% de desconto
+                  </p>
+                </div>
+              </div>
+
+              <button className="bg-white text-orange-600 px-6 py-3 rounded-2xl font-black text-sm uppercase tracking-wider hover:scale-105 transition-transform shadow-2xl flex items-center gap-2 group-hover:gap-3 duration-300">
+                Ver Promoções
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+
         {/* Categories Bar */}
         <div className="flex items-center gap-3 overflow-x-auto pb-6 no-scrollbar">
           {categories.map((cat) => (
@@ -331,11 +452,21 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
               </div>
             </div>
             
-            <div className="p-6 bg-orange-600 rounded-[2rem] text-white relative overflow-hidden group">
+            <div className="p-6 bg-gradient-to-br from-orange-600 via-red-600 to-pink-600 rounded-[2rem] text-white relative overflow-hidden group">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl group-hover:scale-150 transition-transform duration-700" />
-              <h4 className="text-xl font-black leading-tight mb-2 relative z-10">Novas Coleções de Verão</h4>
-              <p className="text-xs font-medium text-white/80 mb-4 relative z-10">Até 40% de desconto em artigos selecionados.</p>
-              <button className="bg-white text-orange-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest relative z-10 hover:scale-105 transition-transform">Ver Agora</button>
+              <div className="absolute bottom-0 left-0 w-24 h-24 bg-yellow-300/20 rounded-full -ml-12 -mb-12 blur-xl" />
+
+              <div className="relative z-10">
+                <div className="flex items-center gap-2 mb-3">
+                  <Star className="w-5 h-5 fill-white animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-widest">Oferta Especial</span>
+                </div>
+                <h4 className="text-xl font-black leading-tight mb-2">Novas Coleções de Verão</h4>
+                <p className="text-xs font-medium text-white/80 mb-4">Até 40% de desconto em artigos selecionados.</p>
+                <button className="bg-white text-orange-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-transform shadow-lg">
+                  Ver Agora
+                </button>
+              </div>
             </div>
           </aside>
 
@@ -352,81 +483,203 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
                 ))}
               </div>
             ) : filteredProducts.length > 0 ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
-                {filteredProducts.map((product) => (
-                  <motion.div
-                    layout
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    key={product.id}
-                    onClick={() => navigate(`/product/${product.id}`)}
-                    className="group bg-white rounded-3xl p-3 md:p-4 border border-neutral-100 hover:border-orange-200 hover:shadow-xl hover:shadow-orange-500/5 transition-all cursor-pointer relative"
-                  >
-                    <div className="absolute top-6 right-6 z-10 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0">
-                      <button className="p-2 bg-white/80 backdrop-blur-md rounded-full text-neutral-400 hover:text-red-500 transition-colors shadow-sm">
-                        <Heart className="w-5 h-5" />
-                      </button>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setQuickViewProduct(product);
-                        }}
-                        className="p-2 bg-white/80 backdrop-blur-md rounded-full text-neutral-400 hover:text-orange-600 transition-colors shadow-sm"
-                      >
-                        <Search className="w-5 h-5" />
-                      </button>
-                    </div>
-
-                    <div className="aspect-square rounded-2xl overflow-hidden bg-neutral-50 mb-4 relative">
-                      <img 
-                        src={product.imageURL} 
-                        alt={product.name}
-                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                        referrerPolicy="no-referrer"
-                      />
-                      {product.oldPrice && (
-                        <div className="absolute bottom-3 left-3 bg-orange-600 text-white text-[10px] font-black px-2 py-1 rounded-lg uppercase tracking-wider">
-                          Oferta
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="space-y-1">
-                      <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">{product.category}</p>
-                      <h3 className="font-bold text-neutral-900 line-clamp-1 group-hover:text-orange-600 transition-colors">
-                        {product.name}
-                      </h3>
-                      
-                      <div className="flex items-center gap-1 text-yellow-400">
-                        <Star className="w-3 h-3 fill-current" />
-                        <span className="text-[10px] font-bold text-neutral-400">{product.rating || 4.9} ({product.reviews || 120})</span>
+              <>
+                {/* Promoções em Destaque */}
+                {promoProducts.length > 0 && (
+                  <div className="mb-10" id="promo-section">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="bg-gradient-to-r from-orange-600 to-red-600 p-2 rounded-xl">
+                        <Star className="w-6 h-6 text-white fill-white" />
                       </div>
+                      <div>
+                        <h2 className="text-2xl font-black text-neutral-900 tracking-tight">Ofertas Especiais</h2>
+                        <p className="text-sm text-neutral-500 font-medium">Promoções por tempo limitado</p>
+                      </div>
+                    </div>
 
-                      <div className="pt-2 flex items-center justify-between">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
+                      {promoProducts.map((product) => {
+                        const discount = calculateDiscount(product.oldPrice, product.price);
+                        return (
+                          <motion.div
+                            layout
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            key={product.id}
+                            onClick={() => navigate(`/product/${product.id}`)}
+                            className="group bg-gradient-to-br from-orange-50 to-red-50 rounded-3xl p-3 md:p-4 border-2 border-orange-200 hover:border-orange-400 hover:shadow-2xl hover:shadow-orange-500/20 transition-all cursor-pointer relative overflow-hidden"
+                          >
+                            {/* Sparkle effect */}
+                            <div className="absolute -top-10 -right-10 w-32 h-32 bg-gradient-to-br from-yellow-200/50 to-orange-300/50 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-700" />
+
+                            {/* Discount Badge */}
+                            <div className="absolute top-3 left-3 z-10 bg-gradient-to-r from-red-600 to-orange-600 text-white px-3 py-1.5 rounded-xl shadow-lg flex items-center gap-1">
+                              <Star className="w-3 h-3 fill-white" />
+                              <span className="text-xs font-black">-{discount}%</span>
+                            </div>
+
+                            <div className="absolute top-6 right-6 z-10 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0">
+                              <button className="p-2 bg-white/80 backdrop-blur-md rounded-full text-neutral-400 hover:text-red-500 transition-colors shadow-sm">
+                                <Heart className="w-5 h-5" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setQuickViewProduct(product);
+                                }}
+                                className="p-2 bg-white/80 backdrop-blur-md rounded-full text-neutral-400 hover:text-orange-600 transition-colors shadow-sm"
+                              >
+                                <Search className="w-5 h-5" />
+                              </button>
+                            </div>
+
+                            <div className="aspect-square rounded-2xl overflow-hidden bg-white mb-4 relative shadow-md">
+                              <img
+                                src={product.imageURL}
+                                alt={product.name}
+                                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                                referrerPolicy="no-referrer"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </div>
+
+                            <div className="space-y-1 relative z-10">
+                              <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">{product.category}</p>
+                              <h3 className="font-bold text-neutral-900 line-clamp-1 group-hover:text-orange-600 transition-colors">
+                                {product.name}
+                              </h3>
+
+                              <div className="flex items-center gap-1 text-yellow-400">
+                                <Star className="w-3 h-3 fill-current" />
+                                <span className="text-[10px] font-bold text-neutral-400">{product.rating || 4.9} ({product.reviews || 120})</span>
+                              </div>
+
+                              <div className="pt-2 flex items-center justify-between">
+                                <div>
+                                  <p className="text-lg font-black text-orange-600 leading-none">
+                                    {product.price.toLocaleString()} Kz
+                                  </p>
+                                  <p className="text-xs text-neutral-400 line-through mt-1 font-medium">
+                                    {product.oldPrice?.toLocaleString()} Kz
+                                  </p>
+                                  <p className="text-[10px] text-green-600 font-black mt-1">
+                                    Poupa {(product.oldPrice! - product.price).toLocaleString()} Kz
+                                  </p>
+                                </div>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    addToCart(product);
+                                  }}
+                                  className="bg-gradient-to-r from-orange-600 to-red-600 text-white p-2.5 rounded-xl hover:scale-110 transition-all shadow-lg shadow-orange-300 active:scale-95"
+                                >
+                                  <Plus className="w-5 h-5" />
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Produtos Regulares */}
+                {regularProducts.length > 0 && (
+                  <>
+                    {promoProducts.length > 0 && (
+                      <div className="flex items-center gap-3 mb-6 mt-8">
+                        <div className="bg-neutral-900 p-2 rounded-xl">
+                          <LayoutGrid className="w-6 h-6 text-white" />
+                        </div>
                         <div>
-                          <p className="text-lg font-black text-neutral-900 leading-none">
-                            {product.price.toLocaleString()} Kz
-                          </p>
-                          {product.oldPrice && (
-                            <p className="text-xs text-neutral-400 line-through mt-1 font-medium">
-                              {product.oldPrice.toLocaleString()} Kz
-                            </p>
-                          )}
+                          <h2 className="text-2xl font-black text-neutral-900 tracking-tight">Todos os Produtos</h2>
+                          <p className="text-sm text-neutral-500 font-medium">{regularProducts.length} produtos disponíveis</p>
                         </div>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            addToCart(product);
-                          }}
-                          className="bg-neutral-900 text-white p-2.5 rounded-xl hover:bg-orange-600 transition-all shadow-lg shadow-neutral-200 active:scale-95"
-                        >
-                          <Plus className="w-5 h-5" />
-                        </button>
                       </div>
+                    )}
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
+                      {regularProducts.map((product) => (
+                        <motion.div
+                          layout
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          key={product.id}
+                          onClick={() => navigate(`/product/${product.id}`)}
+                          className="group bg-white rounded-3xl p-3 md:p-4 border border-neutral-100 hover:border-orange-200 hover:shadow-xl hover:shadow-orange-500/5 transition-all cursor-pointer relative"
+                        >
+                          <div className="absolute top-6 right-6 z-10 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all translate-x-4 group-hover:translate-x-0">
+                            <button className="p-2 bg-white/80 backdrop-blur-md rounded-full text-neutral-400 hover:text-red-500 transition-colors shadow-sm">
+                              <Heart className="w-5 h-5" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setQuickViewProduct(product);
+                              }}
+                              className="p-2 bg-white/80 backdrop-blur-md rounded-full text-neutral-400 hover:text-orange-600 transition-colors shadow-sm"
+                            >
+                              <Search className="w-5 h-5" />
+                            </button>
+                          </div>
+
+                          <div className="aspect-square rounded-2xl overflow-hidden bg-neutral-50 mb-4 relative">
+                            <img
+                              src={product.imageURL}
+                              alt={product.name}
+                              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">{product.category}</p>
+                            <h3 className="font-bold text-neutral-900 line-clamp-1 group-hover:text-orange-600 transition-colors">
+                              {product.name}
+                            </h3>
+
+                            <div className="flex items-center gap-1 text-yellow-400">
+                              <Star className="w-3 h-3 fill-current" />
+                              <span className="text-[10px] font-bold text-neutral-400">{product.rating || 4.9} ({product.reviews || 120})</span>
+                            </div>
+
+                            <div className="pt-2 flex items-center justify-between">
+                              <div>
+                                <p className="text-lg font-black text-neutral-900 leading-none">
+                                  {product.price.toLocaleString()} Kz
+                                </p>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  addToCart(product);
+                                }}
+                                className="bg-neutral-900 text-white p-2.5 rounded-xl hover:bg-orange-600 transition-all shadow-lg shadow-neutral-200 active:scale-95"
+                              >
+                                <Plus className="w-5 h-5" />
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))}
                     </div>
-                  </motion.div>
-                ))}
-              </div>
+                  </>
+                )}
+
+                {/* Intersection Observer Target & Loading More Indicator */}
+                <div ref={observerTarget} className="w-full py-8 flex justify-center">
+                  {loadingMore && (
+                    <div className="flex items-center gap-2 text-orange-600">
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                      <span className="text-sm font-bold">A carregar mais produtos...</span>
+                    </div>
+                  )}
+                  {!hasMore && products.length > 0 && (
+                    <p className="text-sm text-neutral-400 font-medium">Todos os produtos foram carregados</p>
+                  )}
+                </div>
+              </>
             ) : (
               <div className="py-20 flex flex-col items-center justify-center text-center">
                 <div className="bg-neutral-100 p-6 rounded-full mb-4">
@@ -434,7 +687,7 @@ export default function StorePage({ userProfile }: { userProfile: UserProfile | 
                 </div>
                 <h3 className="text-xl font-bold text-neutral-900">Nenhum produto encontrado</h3>
                 <p className="text-neutral-500 mt-2">Tente ajustar os seus filtros ou a sua pesquisa.</p>
-                <button 
+                <button
                   onClick={() => {
                     setSearchQuery('');
                     setSelectedCategory('Todos');

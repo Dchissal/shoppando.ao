@@ -5,6 +5,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { handleFirestoreError, OperationType } from '../../lib/firestore-errors';
 import { Order } from '../../types';
+import { notifyOrderStatusChange } from '../../lib/notifications';
 
 interface OrdersViewProps {
   orders: Order[];
@@ -19,9 +20,14 @@ export function OrdersView({ orders }: OrdersViewProps) {
     return order.status === filter;
   });
 
-  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+  const updateOrderStatus = async (orderId: string, newStatus: string, order: Order) => {
     try {
       await updateDoc(doc(db, 'orders', orderId), { status: newStatus });
+
+      // Notify the customer about the status change
+      if (order.userId) {
+        await notifyOrderStatusChange(order.userId, orderId, newStatus);
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -124,7 +130,7 @@ export function OrdersView({ orders }: OrdersViewProps) {
                   <td className="px-6 py-4">
                     <select
                       value={order.status}
-                      onChange={(e) => updateOrderStatus(order.id, e.target.value as any)}
+                      onChange={(e) => updateOrderStatus(order.id, e.target.value as any, order)}
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider outline-none cursor-pointer ${
                         order.status === 'delivered' ? 'bg-green-100 text-green-600' : 
                         order.status === 'pending' ? 'bg-yellow-100 text-yellow-600' : 

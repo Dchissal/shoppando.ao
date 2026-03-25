@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { 
-  Search, 
-  TrendingUp, 
-  Plus, 
-  Loader2, 
-  Package, 
-  Edit3, 
-  Trash2, 
-  X, 
-  Image as ImageIcon 
+import {
+  Search,
+  TrendingUp,
+  Plus,
+  Loader2,
+  Package,
+  Edit3,
+  Trash2,
+  X,
+  Image as ImageIcon,
+  Star
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { db, storage, auth } from '../../firebase';
@@ -40,6 +41,16 @@ export function ProductsView({
     }
   };
 
+  const toggleFeatured = async (id: string, currentFeatured: boolean) => {
+    try {
+      await updateDoc(doc(db, 'products', id), {
+        featured: !currentFeatured
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `products/${id}`);
+    }
+  };
+
   const handleDeleteProduct = async (id: string) => {
     if (window.confirm("Tens a certeza que queres eliminar este artigo?")) {
       try {
@@ -64,7 +75,7 @@ export function ProductsView({
     e.preventDefault();
     setLoading(true);
     const formData = new FormData(e.currentTarget);
-    
+
     try {
       let imageURL = editingProduct?.imageURL || '';
       if (imageFile) {
@@ -82,6 +93,7 @@ export function ProductsView({
         description: formData.get('description') as string,
         colors: (formData.get('colors') as string)?.split(',').map(s => s.trim()).filter(s => s) || [],
         sizes: (formData.get('sizes') as string)?.split(',').map(s => s.trim()).filter(s => s) || [],
+        featured: formData.get('featured') === 'on',
         imageURL,
         status: editingProduct?.status || 'active',
         updatedAt: serverTimestamp(),
@@ -188,13 +200,14 @@ export function ProductsView({
                 <th className="px-6 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Preço</th>
                 <th className="px-6 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Stock</th>
                 <th className="px-6 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Estado</th>
+                <th className="px-6 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest">Destaque</th>
                 <th className="px-6 py-4 text-xs font-black text-neutral-400 uppercase tracking-widest text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
               {products.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-20 text-center">
+                  <td colSpan={7} className="px-6 py-20 text-center">
                     <Package className="w-16 h-16 text-neutral-200 mx-auto mb-4" />
                     <p className="text-neutral-900 font-bold text-lg">Catálogo vazio</p>
                     <p className="text-neutral-400">Começa por adicionar o teu primeiro produto.</p>
@@ -229,26 +242,39 @@ export function ProductsView({
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <button 
+                    <button
                       onClick={() => toggleStatus(product.id, product.status)}
                       className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider transition-all ${
-                        product.status === 'active' 
-                          ? 'bg-green-100 text-green-600 hover:bg-green-200' 
+                        product.status === 'active'
+                          ? 'bg-green-100 text-green-600 hover:bg-green-200'
                           : 'bg-neutral-100 text-neutral-400 hover:bg-neutral-200'
                       }`}
                     >
                       {product.status === 'active' ? 'Ativo' : 'Inativo'}
                     </button>
                   </td>
+                  <td className="px-6 py-4">
+                    <button
+                      onClick={() => toggleFeatured(product.id, product.featured || false)}
+                      className={`p-2 rounded-lg transition-all ${
+                        product.featured
+                          ? 'bg-orange-100 text-orange-600 hover:bg-orange-200'
+                          : 'bg-neutral-100 text-neutral-300 hover:bg-neutral-200 hover:text-neutral-500'
+                      }`}
+                      title={product.featured ? 'Remover da Landing' : 'Adicionar à Landing'}
+                    >
+                      <Star className={`w-5 h-5 ${product.featured ? 'fill-orange-600' : ''}`} />
+                    </button>
+                  </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button 
+                      <button
                         onClick={() => openEditModal(product)}
                         className="p-2 text-neutral-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-all"
                       >
                         <Edit3 className="w-4 h-4" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleDeleteProduct(product.id)}
                         className="p-2 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                       >
@@ -321,9 +347,9 @@ export function ProductsView({
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="block text-xs font-black text-neutral-400 uppercase tracking-widest ml-1">Preço (Kz)</label>
-                      <input 
+                      <input
                         name="price"
-                        type="number" 
+                        type="number"
                         defaultValue={editingProduct?.price}
                         placeholder="0"
                         className="w-full px-5 py-3.5 bg-neutral-50 border border-neutral-200 rounded-2xl focus:border-orange-500 outline-none font-bold"
@@ -331,33 +357,45 @@ export function ProductsView({
                       />
                     </div>
                     <div className="space-y-2">
+                      <label className="block text-xs font-black text-neutral-400 uppercase tracking-widest ml-1">Preço Antigo (Kz)</label>
+                      <input
+                        name="oldPrice"
+                        type="number"
+                        defaultValue={editingProduct?.oldPrice || ''}
+                        placeholder="Opcional"
+                        className="w-full px-5 py-3.5 bg-neutral-50 border border-neutral-200 rounded-2xl focus:border-orange-500 outline-none font-bold"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
                       <label className="block text-xs font-black text-neutral-400 uppercase tracking-widest ml-1">Stock Inicial</label>
-                      <input 
+                      <input
                         name="stock"
-                        type="number" 
+                        type="number"
                         defaultValue={editingProduct?.stock}
                         placeholder="0"
                         className="w-full px-5 py-3.5 bg-neutral-50 border border-neutral-200 rounded-2xl focus:border-orange-500 outline-none font-bold"
                         required
                       />
                     </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="block text-xs font-black text-neutral-400 uppercase tracking-widest ml-1">Categoria</label>
-                    <select 
-                      name="category"
-                      defaultValue={editingProduct?.category}
-                      className="w-full px-5 py-3.5 bg-neutral-50 border border-neutral-200 rounded-2xl focus:border-orange-500 outline-none font-bold appearance-none"
-                      required
-                    >
-                      <option value="">Seleciona...</option>
-                      <option value="Eletrónicos">Eletrónicos</option>
-                      <option value="Moda">Moda</option>
-                      <option value="Casa">Casa</option>
-                      <option value="Beleza">Beleza</option>
-                      <option value="Desporto">Desporto</option>
-                    </select>
+                    <div className="space-y-2">
+                      <label className="block text-xs font-black text-neutral-400 uppercase tracking-widest ml-1">Categoria</label>
+                      <select
+                        name="category"
+                        defaultValue={editingProduct?.category}
+                        className="w-full px-5 py-3.5 bg-neutral-50 border border-neutral-200 rounded-2xl focus:border-orange-500 outline-none font-bold appearance-none"
+                        required
+                      >
+                        <option value="">Seleciona...</option>
+                        <option value="Eletrónicos">Eletrónicos</option>
+                        <option value="Moda">Moda</option>
+                        <option value="Casa">Casa</option>
+                        <option value="Beleza">Beleza</option>
+                        <option value="Desporto">Desporto</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -387,13 +425,35 @@ export function ProductsView({
 
               <div className="space-y-2">
                 <label className="block text-xs font-black text-neutral-400 uppercase tracking-widest ml-1">Descrição Detalhada</label>
-                <textarea 
+                <textarea
                   name="description"
                   defaultValue={editingProduct?.description}
                   rows={4}
                   placeholder="Descreve as características principais do produto..."
                   className="w-full px-5 py-3.5 bg-neutral-50 border border-neutral-200 rounded-2xl focus:border-orange-500 outline-none font-medium resize-none"
                 />
+              </div>
+
+              {/* Featured Checkbox */}
+              <div className="flex items-center gap-4 p-4 bg-gradient-to-r from-orange-50 to-red-50 border-2 border-orange-200 rounded-2xl">
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    name="featured"
+                    defaultChecked={editingProduct?.featured || false}
+                    className="sr-only peer"
+                  />
+                  <div className="w-14 h-8 bg-neutral-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-orange-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:start-[4px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-orange-600"></div>
+                </label>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <Star className="w-5 h-5 text-orange-600" />
+                    <span className="font-black text-neutral-900">Destacar na Landing Page</span>
+                  </div>
+                  <p className="text-xs text-neutral-500 font-medium mt-1">
+                    Este produto aparecerá na página inicial para todos os visitantes (máximo 6 produtos)
+                  </p>
+                </div>
               </div>
 
               <div className="pt-4 flex gap-4">

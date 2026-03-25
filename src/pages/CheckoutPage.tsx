@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { 
-  ChevronLeft, 
-  CreditCard, 
-  Truck, 
-  ShieldCheck, 
-  MapPin, 
-  Phone, 
-  Mail, 
+import {
+  ChevronLeft,
+  CreditCard,
+  Truck,
+  ShieldCheck,
+  MapPin,
+  Phone,
+  Mail,
   User,
   CheckCircle2,
   ArrowRight,
@@ -18,6 +18,7 @@ import { useCart } from '../context/CartContext';
 import { db, auth } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { STORE_NAME } from '../constants';
+import { notifyAdminsNewOrder } from '../lib/notifications';
 
 const CheckoutPage: React.FC = () => {
   const { cart, cartTotal, clearCart } = useCart();
@@ -54,6 +55,10 @@ const CheckoutPage: React.FC = () => {
 
       const docRef = await addDoc(collection(db, 'orders'), orderData);
       setOrderId(docRef.id);
+
+      // Notify all admins about the new order
+      await notifyAdminsNewOrder(docRef.id, formData.name, cartTotal);
+
       clearCart();
       setStep(3);
     } catch (error) {

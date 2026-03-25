@@ -28,6 +28,7 @@ service cloud.firestore {
     //   - category: string (required)
     //   - imageURL: string (required)
     //   - stock: number (optional)
+    //   - featured: boolean (optional, show on landing page)
     //   - createdAt: timestamp (required)
     //   - createdBy: string (required, uid)
     //
@@ -99,10 +100,11 @@ service cloud.firestore {
              data.price is number && data.price >= 0 &&
              data.category is string && data.category.size() > 0 &&
              data.imageURL is string && data.imageURL.size() > 0 &&
-             (!('oldPrice' in data) || data.oldPrice is number) &&
+             (!('oldPrice' in data) || data.oldPrice is number || data.oldPrice == null) &&
              (!('description' in data) || data.description is string) &&
              (!('stock' in data) || data.stock is int && data.stock >= 0) &&
              (!('status' in data) || data.status in ['active', 'inactive']) &&
+             (!('featured' in data) || data.featured is bool) &&
              data.createdBy is string &&
              data.createdAt is timestamp;
     }
@@ -185,10 +187,11 @@ service cloud.firestore {
       allow read: if isAuthenticated() &&
                     (resource.data.userId == request.auth.uid || isAdmin());
 
-      // Admins can create notifications for anyone
-      // System can create notifications (via admin SDK)
-      allow create: if isAdmin() ||
-                      (isAuthenticated() && request.resource.data.userId == request.auth.uid);
+      // Any authenticated user can create notifications
+      // - Admins create order status notifications for customers
+      // - Customers create new order notifications for admins
+      // - Users create notifications for themselves
+      allow create: if isAuthenticated();
 
       // Users can mark their own notifications as read
       // Admins can update any notification

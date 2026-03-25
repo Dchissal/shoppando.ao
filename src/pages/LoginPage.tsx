@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ShoppingBag, ArrowLeft, Lock, Mail, Loader2 } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
@@ -11,6 +11,10 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Pegar redirectTo do state da navegação
+  const redirectTo = (location.state as any)?.redirectTo || '/';
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 1024);
@@ -37,7 +41,8 @@ export default function LoginPage() {
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      navigate('/');
+      // Redirecionar para a página original ou home
+      navigate(redirectTo);
     } catch (err: any) {
       console.error("Login error:", err);
       setError("E-mail ou palavra-passe incorretos.");

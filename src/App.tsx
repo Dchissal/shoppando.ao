@@ -4,14 +4,14 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { 
-  ShoppingBag, 
-  Truck, 
-  Zap, 
-  ShieldCheck, 
-  Menu, 
-  X, 
-  ChevronRight, 
+import {
+  ShoppingBag,
+  Truck,
+  Zap,
+  ShieldCheck,
+  Menu,
+  X,
+  ChevronRight,
   Star,
   Facebook,
   Instagram,
@@ -25,7 +25,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { BrowserRouter, Routes, Route, Link, useNavigate } from 'react-router-dom';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, onSnapshot, collection, query, orderBy, getDocFromServer } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, collection, query, orderBy, where, limit, getDocFromServer } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -37,7 +37,9 @@ import AccountPage from './pages/AccountPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { handleFirestoreError, OperationType } from './lib/firestore-errors';
 import { CartProvider } from './context/CartContext';
+import { NotificationProvider } from './context/NotificationContext';
 import { STORE_NAME } from './constants';
+import { Product } from './types';
 
 // Connection test
 async function testConnection() {
@@ -61,67 +63,49 @@ interface UserProfile {
   photoURL?: string;
 }
 
-const FEATURED_PRODUCTS = [
-  {
-    id: 1,
-    name: 'iPhone 15 Pro Max',
-    price: '1.250.000 Kz',
-    oldPrice: '1.400.000 Kz',
-    image: '/Assets/imagens/iphone_15_Pro_Max.jpeg',
-    tag: 'Destaque',
-    gridClass: 'lg:col-span-2 lg:row-span-2',
-  },
-  {
-    id: 2,
-    name: 'Smart TV Samsung 4K 65"',
-    price: '450.000 Kz',
-    oldPrice: '520.000 Kz',
-    image: '/Assets/imagens/Smart TV Samsung 4K 65.webp',
-    tag: 'Mais Vendido',
-    gridClass: 'lg:col-span-2 lg:row-span-1',
-  },
-  {
-    id: 3,
-    name: 'AirPods Pro 2',
-    price: '145.000 Kz',
-    oldPrice: '180.000 Kz',
-    image: '/Assets/imagens/AirPods Pro .jpeg',
-    tag: 'Oferta',
-    gridClass: 'lg:col-span-1 lg:row-span-1',
-  },
-  {
-    id: 4,
-    name: 'Nike Air Max Pulse',
-    price: '85.000 Kz',
-    oldPrice: '110.000 Kz',
-    image: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?q=80&w=800&auto=format&fit=crop',
-    tag: 'Novo',
-    gridClass: 'lg:col-span-1 lg:row-span-1',
-  },
-];
 
 function LandingPage({ userProfile }: { userProfile: UserProfile | null }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [wordIndex, setWordIndex] = useState(0);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [products, setProducts] = useState<any[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const navigate = useNavigate();
 
   const words = ['COMPRAR', 'VENDER', 'ENTREGAR', 'POUPAR', 'CONFIAR'];
 
+  // Buscar apenas produtos featured (limitado a 6)
   useEffect(() => {
-    const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
+    const q = query(
+      collection(db, 'products'),
+      where('featured', '==', true),
+      where('status', '==', 'active'),
+      orderBy('createdAt', 'desc'),
+      limit(6)
+    );
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const prods = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(prods);
       setLoadingProducts(false);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'products');
+      setLoadingProducts(false);
     });
     return () => unsubscribe();
   }, []);
+
+  // Handler para clicar no produto - verificar autenticação
+  const handleProductClick = (productId: string) => {
+    if (!userProfile) {
+      // Se não estiver logado, redirecionar para login
+      navigate('/login', { state: { redirectTo: `/product/${productId}` } });
+    } else {
+      // Se estiver logado, ir para detalhes do produto
+      navigate(`/product/${productId}`);
+    }
+  };
 
   React.useEffect(() => {
     const handleScroll = () => {
@@ -450,21 +434,38 @@ function LandingPage({ userProfile }: { userProfile: UserProfile | null }) {
       </section>
 
       {/* Featured Products */}
-      <section id="promocoes" className="py-24 bg-neutral-50">
+      <section id="promocoes" className="py-16 md:py-24 bg-neutral-50 overflow-hidden">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col md:flex-row justify-between items-end mb-16 gap-6">
+          {/* Header */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-10 md:mb-16 gap-6">
             <div className="max-w-2xl">
-              <h2 className="text-4xl md:text-6xl font-black mb-6 tracking-tighter leading-none">Ofertas em <span className="text-orange-600">Destaque</span></h2>
-              <p className="text-neutral-500 text-lg md:text-xl font-medium">Os melhores artigos selecionados para ti, com a garantia de qualidade {STORE_NAME}.</p>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-500 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/30">
+                  <Star className="w-6 h-6 text-white fill-white" />
+                </div>
+                <span className="text-xs font-black text-orange-600 uppercase tracking-widest bg-orange-100 px-3 py-1.5 rounded-full">
+                  Selecionados para ti
+                </span>
+              </div>
+              <h2 className="text-4xl md:text-6xl font-black mb-4 tracking-tighter leading-none text-neutral-900">
+                Ofertas em <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-500 to-red-500">Destaque</span>
+              </h2>
+              <p className="text-neutral-500 text-lg md:text-xl font-medium">
+                {products.length > 0
+                  ? `${products.length} artigos premium com os melhores preços.`
+                  : 'Os melhores artigos selecionados para ti.'}
+              </p>
             </div>
-            <div className="flex gap-2">
-              <button className="p-4 bg-white border border-neutral-200 rounded-2xl hover:border-orange-600 transition-all shadow-sm">
-                <ChevronRight className="w-6 h-6 rotate-180" />
+
+            {userProfile && products.length > 0 && (
+              <button
+                onClick={() => navigate('/store')}
+                className="group flex items-center gap-2 px-6 py-3 bg-neutral-900 text-white font-bold rounded-2xl hover:bg-orange-600 transition-all shadow-lg"
+              >
+                Ver Todos
+                <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </button>
-              <button className="p-4 bg-white border border-neutral-200 rounded-2xl hover:border-orange-600 transition-all shadow-sm">
-                <ChevronRight className="w-6 h-6" />
-              </button>
-            </div>
+            )}
           </div>
 
           {loadingProducts ? (
@@ -478,58 +479,186 @@ function LandingPage({ userProfile }: { userProfile: UserProfile | null }) {
                 <ShoppingBag className="w-10 h-10 text-neutral-200" />
               </div>
               <div>
-                <h3 className="text-2xl font-bold text-neutral-900 mb-2">Ainda não há artigos disponíveis</h3>
+                <h3 className="text-2xl font-bold text-neutral-900 mb-2">Ainda não há artigos em destaque</h3>
                 <p className="text-neutral-500">Estamos a preparar as melhores ofertas para ti. Volta em breve!</p>
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
-              {products.map((product) => (
-                <motion.div 
-                  key={product.id}
-                  whileHover={isMobile ? undefined : { y: -10 }}
-                  onClick={() => navigate(`/product/${product.id}`)}
-                  className="bg-white rounded-[2.5rem] overflow-hidden shadow-sm border border-neutral-100 group flex flex-col h-full cursor-pointer"
-                >
-                  <div className="relative aspect-[4/5] overflow-hidden">
-                    <img 
-                      src={product.imageURL} 
-                      alt={product.name} 
-                      className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 auto-rows-[200px] md:auto-rows-[280px]">
+              {products.map((product, index) => {
+                // Layout bento: primeiro item grande, outros variam
+                const isHero = index === 0;
+                const isTall = index === 3;
+                const isWide = index === 4;
+
+                return (
+                  <motion.div
+                    key={product.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: index * 0.1 }}
+                    whileHover={isMobile ? undefined : { scale: 1.02 }}
+                    onClick={() => handleProductClick(product.id)}
+                    className={`
+                      relative overflow-hidden rounded-[2rem] cursor-pointer group
+                      ${isHero ? 'col-span-2 row-span-2' : ''}
+                      ${isTall ? 'row-span-2' : ''}
+                      ${isWide ? 'col-span-2' : ''}
+                    `}
+                  >
+                    {/* Background Image */}
+                    <img
+                      src={product.imageURL}
+                      alt={product.name}
+                      className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                       referrerPolicy="no-referrer"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                    
-                    <span className="absolute top-6 left-6 bg-white/90 backdrop-blur-md text-neutral-900 text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest z-10 shadow-sm">
-                      {product.category}
-                    </span>
 
-                    <button className="absolute bottom-6 right-6 bg-orange-600 text-white p-4 rounded-2xl opacity-0 translate-y-4 group-hover:opacity-100 group-hover:translate-y-0 transition-all shadow-xl shadow-orange-600/20 active:scale-90 z-20">
-                      <Plus className="w-6 h-6" />
-                    </button>
-                  </div>
+                    {/* Gradient Overlay */}
+                    <div className={`absolute inset-0 ${isHero
+                      ? 'bg-gradient-to-t from-black/80 via-black/20 to-transparent'
+                      : 'bg-gradient-to-t from-black/70 via-black/10 to-transparent'
+                    }`} />
 
-                  <div className="p-8 flex flex-col flex-1">
-                    <h3 className="text-xl font-bold text-neutral-900 mb-2 leading-tight group-hover:text-orange-600 transition-colors">
-                      {product.name}
-                    </h3>
-                    <p className="text-neutral-500 text-sm mb-6 line-clamp-2 font-medium">
-                      {product.description || 'Artigo de alta qualidade disponível para entrega imediata em todo o país.'}
-                    </p>
-                    <div className="mt-auto flex items-center justify-between">
-                      <div className="flex flex-col">
-                        <span className="text-2xl font-black text-neutral-900">{product.price.toLocaleString()} Kz</span>
-                        {product.oldPrice && (
-                          <span className="text-neutral-400 text-sm line-through font-bold">{product.oldPrice.toLocaleString()} Kz</span>
+                    {/* Decorative glow */}
+                    {isHero && (
+                      <div className="absolute -bottom-20 -right-20 w-64 h-64 bg-orange-500/30 rounded-full blur-[80px] group-hover:bg-orange-500/50 transition-all duration-500" />
+                    )}
+
+                    {/* Top Badges */}
+                    <div className="absolute top-4 left-4 right-4 flex items-start justify-between z-10">
+                      {/* Featured Badge */}
+                      <div className={`
+                        bg-gradient-to-r from-orange-500 to-red-500 text-white font-black uppercase tracking-widest
+                        rounded-full shadow-lg flex items-center gap-1
+                        ${isHero ? 'text-xs px-4 py-2' : 'text-[8px] px-2 py-1'}
+                      `}>
+                        <Star className={`fill-white ${isHero ? 'w-4 h-4' : 'w-3 h-3'}`} />
+                        {isHero ? 'Destaque' : <span className="hidden sm:inline">Top</span>}
+                      </div>
+
+                      {/* Discount Badge */}
+                      {product.oldPrice && (
+                        <div className={`
+                          bg-white text-red-600 font-black rounded-full shadow-lg
+                          ${isHero ? 'text-sm px-4 py-2' : 'text-[10px] px-2 py-1'}
+                        `}>
+                          -{Math.round(((product.oldPrice - product.price) / product.oldPrice) * 100)}%
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Content */}
+                    <div className={`
+                      absolute bottom-0 left-0 right-0 p-4 md:p-6 z-10
+                      ${isHero ? 'p-6 md:p-10' : ''}
+                    `}>
+                      {/* Category */}
+                      <span className={`
+                        text-orange-400 font-black uppercase tracking-widest
+                        ${isHero ? 'text-xs mb-2' : 'text-[8px] mb-1'}
+                        block
+                      `}>
+                        {product.category}
+                      </span>
+
+                      {/* Name */}
+                      <h3 className={`
+                        text-white font-black leading-tight group-hover:text-orange-300 transition-colors
+                        ${isHero ? 'text-2xl md:text-4xl mb-3' : 'text-sm md:text-lg mb-2 line-clamp-2'}
+                      `}>
+                        {product.name}
+                      </h3>
+
+                      {/* Description - only on hero */}
+                      {isHero && (
+                        <p className="text-white/70 text-sm md:text-base mb-4 line-clamp-2 max-w-md">
+                          {product.description || 'Artigo premium com garantia de qualidade e entrega rápida.'}
+                        </p>
+                      )}
+
+                      {/* Price & CTA */}
+                      <div className={`flex items-center gap-3 ${isHero ? 'flex-wrap' : ''}`}>
+                        <div className="flex flex-col">
+                          <span className={`
+                            text-white font-black
+                            ${isHero ? 'text-2xl md:text-3xl' : 'text-base md:text-xl'}
+                          `}>
+                            {product.price.toLocaleString()} <span className={isHero ? 'text-lg' : 'text-xs'}>Kz</span>
+                          </span>
+                          {product.oldPrice && (
+                            <span className={`text-white/50 line-through ${isHero ? 'text-sm' : 'text-[10px]'}`}>
+                              {product.oldPrice.toLocaleString()} Kz
+                            </span>
+                          )}
+                        </div>
+
+                        {isHero && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleProductClick(product.id);
+                            }}
+                            className="ml-auto px-6 py-3 bg-white text-neutral-900 text-sm font-black rounded-xl hover:bg-orange-500 hover:text-white transition-all active:scale-95 shadow-xl"
+                          >
+                            {userProfile ? 'Ver Detalhes' : 'Fazer Login'}
+                          </button>
                         )}
                       </div>
-                      <button className="px-6 py-3 bg-neutral-900 text-white text-sm font-bold rounded-xl hover:bg-orange-600 transition-all active:scale-95">
-                        Comprar
-                      </button>
                     </div>
+
+                    {/* Hover overlay for non-hero items */}
+                    {!isHero && !userProfile && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                        <div className="bg-white/95 backdrop-blur-md rounded-2xl p-4 flex flex-col items-center gap-1 shadow-2xl">
+                          <div className="w-10 h-10 bg-orange-500 rounded-xl flex items-center justify-center">
+                            <ChevronRight className="w-5 h-5 text-white" />
+                          </div>
+                          <p className="text-xs font-black text-neutral-900">Login</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Shine effect on hover */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 pointer-events-none" />
+                  </motion.div>
+                );
+              })}
+
+              {/* Promo Card - aparece se tiver menos de 6 produtos */}
+              {products.length < 6 && products.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  whileInView={{ opacity: 1 }}
+                  viewport={{ once: true }}
+                  className={`
+                    relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-orange-500 via-red-500 to-pink-500 p-6 flex flex-col justify-between
+                    ${products.length <= 2 ? 'col-span-2' : ''}
+                    ${products.length === 1 ? 'row-span-2' : ''}
+                  `}
+                >
+                  <div className="absolute top-0 right-0 w-40 h-40 bg-white/10 rounded-full -mr-20 -mt-20 blur-2xl" />
+                  <div className="absolute bottom-0 left-0 w-32 h-32 bg-black/10 rounded-full -ml-16 -mb-16 blur-xl" />
+
+                  <div className="relative z-10">
+                    <Star className="w-10 h-10 text-white/80 fill-white/80 mb-4" />
+                    <h4 className="text-xl md:text-2xl font-black text-white leading-tight mb-2">
+                      Mais ofertas em breve!
+                    </h4>
+                    <p className="text-white/80 text-sm font-medium">
+                      Estamos a preparar novos produtos em destaque para ti.
+                    </p>
                   </div>
+
+                  <button
+                    onClick={() => navigate(userProfile ? '/store' : '/login')}
+                    className="relative z-10 mt-4 px-6 py-3 bg-white text-orange-600 font-black text-sm rounded-xl hover:scale-105 transition-transform shadow-lg"
+                  >
+                    {userProfile ? 'Ver Loja' : 'Criar Conta'}
+                  </button>
                 </motion.div>
-              ))}
+              )}
             </div>
           )}
         </div>
@@ -596,15 +725,14 @@ function LandingPage({ userProfile }: { userProfile: UserProfile | null }) {
                 <li><a href="#" className="hover:text-orange-600 transition-colors">Meus Pedidos</a></li>
                 <li><a href="#" className="hover:text-orange-600 transition-colors">Lista de Desejos</a></li>
                 <li><a href="#" className="hover:text-orange-600 transition-colors">Termos e Condições</a></li>
+                <li><a href="#" className="hover:text-orange-600 transition-colors">Política de Privacidade</a></li>
               </ul>
             </div>
 
             <div>
               <h4 className="font-bold text-lg mb-6">Apoio ao Cliente</h4>
               <ul className="space-y-4 text-neutral-500">
-                <li><a href="#" className="hover:text-orange-600 transition-colors">Centro de Ajuda</a></li>
                 <li><a href="#" className="hover:text-orange-600 transition-colors">Política de Devolução</a></li>
-                <li><a href="#" className="hover:text-orange-600 transition-colors">Rastrear Encomenda</a></li>
                 <li><a href="#" className="hover:text-orange-600 transition-colors">Contacto</a></li>
               </ul>
             </div>
@@ -692,34 +820,36 @@ export default function App() {
 
   return (
     <CartProvider>
-      <ErrorBoundary>
-        <BrowserRouter>
-          <Routes>
-            <Route 
-              path="/" 
-              element={
-                userProfile 
-                  ? <StorePage userProfile={userProfile} /> 
-                  : <LandingPage userProfile={userProfile} />
-              } 
-            />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/store" element={<StorePage userProfile={userProfile} />} />
-            <Route path="/product/:id" element={<ProductDetailPage />} />
-            <Route path="/checkout" element={<CheckoutPage />} />
-            <Route path="/account" element={<AccountPage />} />
-            <Route 
-              path="/admin" 
-              element={
-                userProfile?.role === 'admin' 
-                  ? <AdminDashboard /> 
-                  : <div className="h-screen flex items-center justify-center bg-white text-neutral-900 font-bold">Acesso negado. Apenas administradores.</div>
-              } 
-            />
-          </Routes>
-        </BrowserRouter>
-      </ErrorBoundary>
+      <NotificationProvider>
+        <ErrorBoundary>
+          <BrowserRouter>
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  userProfile
+                    ? <StorePage userProfile={userProfile} />
+                    : <LandingPage userProfile={userProfile} />
+                }
+              />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route path="/store" element={<StorePage userProfile={userProfile} />} />
+              <Route path="/product/:id" element={<ProductDetailPage />} />
+              <Route path="/checkout" element={<CheckoutPage />} />
+              <Route path="/account" element={<AccountPage />} />
+              <Route
+                path="/admin"
+                element={
+                  userProfile?.role === 'admin'
+                    ? <AdminDashboard />
+                    : <div className="h-screen flex items-center justify-center bg-white text-neutral-900 font-bold">Acesso negado. Apenas administradores.</div>
+                }
+              />
+            </Routes>
+          </BrowserRouter>
+        </ErrorBoundary>
+      </NotificationProvider>
     </CartProvider>
   );
 }
